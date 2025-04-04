@@ -22,10 +22,18 @@ contract EnhancedBusinessWalletResolver is ReentrancyGuard {
     mapping(bytes32 => Business) private businesses;              // domainHash => Business
     mapping(bytes32 => mapping(address => bytes32)) private senderWallets;  // domainHash => sender => walletSeed
     mapping(bytes32 => address) private defaultWallets;          // domainHash => default wallet
+    mapping(bytes32 => address[]) private resolvedAddresses;  // domainHash => all resolved addresses
+    mapping(bytes32 => mapping(address => uint256)) private lastInteraction; // domainHash => wallet => timestamp
     
     // Events
     event BusinessRegistered(bytes32 indexed domainHash);
     event WalletAssigned(bytes32 indexed domainHash, address indexed sender);
+    event WalletGenerated(
+        bytes32 indexed domainHash,
+        address indexed sender,
+        address generatedWallet,
+        uint256 timestamp
+    );
 
     // Errors
     error Unauthorized();
@@ -55,19 +63,21 @@ contract EnhancedBusinessWalletResolver is ReentrancyGuard {
     function getWallet(
         bytes32 domainHash,
         address sender
-    ) external view returns (address) {
+    ) external returns (address) {
         if (businesses[domainHash].domainHash == bytes32(0)) {
             revert BusinessNotFound();
         }
 
-        bytes32 walletSeed = senderWallets[domainHash][sender];
+        address generatedWallet = generateDeterministicWallet(domainHash, sender);
         
-        // If sender has no assigned wallet, generate deterministic one
-        if (walletSeed == bytes32(0)) {
-            return generateDeterministicWallet(domainHash, sender);
+        // Track only new resolutions
+        if (lastInteraction[domainHash][generatedWallet] == 0) {
+            resolvedAddresses[domainHash].push(generatedWallet);
+            emit WalletGenerated(domainHash, sender, generatedWallet, block.timestamp);
         }
-
-        return address(uint160(uint256(walletSeed)));
+        
+        lastInteraction[domainHash][generatedWallet] = block.timestamp;
+        return generatedWallet;
     }
 
     // Internal function to generate deterministic wallet
@@ -91,5 +101,36 @@ contract EnhancedBusinessWalletResolver is ReentrancyGuard {
     ) internal pure returns (bool) {
         // Implement ENS ownership verification
         return true; // Placeholder
+    }
+
+    // Function to get resolved addresses count (only owner)
+    function getResolvedAddressesCount(bytes32 domainHash) external view returns (uint256) {
+        require(businesses[domainHash].owner == msg.sender, "Not domain owner");
+        return resolvedAddresses[domainHash].length;
+    }
+
+    // Function to get resolved addresses with pagination (only owner)
+    function getResolvedAddresses(
+        bytes32 domainHash,
+        uint256 offset,
+        uint256 limit
+    ) external view returns (
+        address[] memory addresses,
+        uint256[] memory timestamps
+    ) {
+        require(businesses[domainHash].owner == msg.sender, "Not domain owner");
+        
+        uint256 total = resolvedAddresses[domainHash].length;
+        uint256 end = (offset + limit > total) ? total : offset + limit;
+        uint256 resultSize = end - offset;
+        
+        addresses = new address[](resultSize);
+        timestamps = new uint256[](resultSize);
+        
+        for (uint256 i = 0; i < resultSize; i++) {
+            address resolvedAddr = resolvedAddresses[domainHash][offset + i];
+            addresses[i] = resolvedAddr;
+            timestamps[i] = lastInteraction[domainHash][resolvedAddr];
+        }
     }
 }
