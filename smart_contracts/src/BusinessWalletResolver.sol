@@ -10,7 +10,7 @@ interface IBusinessWallet {
     function withdrawERC20(address token, address to, uint256 amount) external;
 }
 
-contract EnhancedBusinessWalletResolver is ReentrancyGuard {
+contract BusinessWalletResolver is ReentrancyGuard {
     // State variables
     BusinessWalletFactory public immutable factory;
     bytes32 private immutable DOMAIN_SALT;
