@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.4 <0.9.0;
 
-import "@ensdomains/ens-contracts/contracts/resolvers/SupportsInterface.sol";
+import "@openzeppelin/contracts/utils/introspection/ERC165.sol";
 import "./IExtendedResolver.sol";
 import "./SignatureVerifier.sol";
 
@@ -20,7 +20,7 @@ interface IResolverService {
  * Implements an ENS resolver that directs all queries to a CCIP read gateway.
  * Callers must implement EIP 3668 and ENSIP 10.
  */
-contract OffchainResolver is IExtendedResolver, SupportsInterface {
+contract OffchainResolver is IExtendedResolver, ERC165 {
     string public url;
     mapping(address => bool) public signers;
 
@@ -114,7 +114,8 @@ contract OffchainResolver is IExtendedResolver, SupportsInterface {
 
     function supportsInterface(bytes4 interfaceID)
         public
-        pure
+        view
+        virtual
         override
         returns (bool)
     {
