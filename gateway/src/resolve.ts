@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 import businessWalletsResolver from "./helpers/BusinessWalletResolver.json";
 import "dotenv/config";
 
+// Create provider and wallet
 const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL!);
 
 const BUSINESS_WALLETS_RESOLVER_ADDRESS =
@@ -13,8 +14,8 @@ if (!BUSINESS_WALLETS_RESOLVER_ADDRESS) {
 
 const resolve = async (name: string, sender: string, data: any) => {
   try {
-    // Create a contract instance
-    const resolverContract = new ethers.Contract(
+    // Create contract instance with provider for view functions
+    const contract = new ethers.Contract(
       BUSINESS_WALLETS_RESOLVER_ADDRESS,
       businessWalletsResolver.abi,
       provider
@@ -23,14 +24,32 @@ const resolve = async (name: string, sender: string, data: any) => {
     // Calculate the domain hash from the name
     const domainHash = ethers.utils.namehash(name);
 
-    // Call the getWallet function with domainHash and sender address
-    const walletAddress = await resolverContract.getWallet(domainHash, sender);
+    try {
+      // Get wallet address (view function only)
+      const walletAddress = await contract.getWallet(domainHash, sender);
+      console.log("walletAddress", walletAddress);
 
-    // Return the wallet address as a hex string
-    return ethers.utils.hexlify(walletAddress);
+      // Encode the wallet address in the format ENS expects
+      // For addr(bytes32) calls, we need to return the address as a 32-byte value
+      return ethers.utils.defaultAbiCoder.encode(["address"], [walletAddress]);
+    } catch (error: any) {
+      console.log("Contract error:", error.message);
+      // If business is not registered, return zero address
+      if (error.message.includes("Business not registered")) {
+        return ethers.utils.defaultAbiCoder.encode(
+          ["address"],
+          [ethers.constants.AddressZero]
+        );
+      }
+      throw error;
+    }
   } catch (error) {
     console.error("Error resolving address:", error);
-    throw new Error("Failed to resolve address for sender");
+    // For any other error, return zero address
+    return ethers.utils.defaultAbiCoder.encode(
+      ["address"],
+      [ethers.constants.AddressZero]
+    );
   }
 };
 

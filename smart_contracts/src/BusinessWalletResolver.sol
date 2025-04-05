@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -35,6 +35,11 @@ contract BusinessWalletResolver is ReentrancyGuard {
     // Events - now with minimal information
     event BusinessRegistered(bytes32 indexed domainHash);
     event WalletAssigned(bytes32 indexed domainHash);
+    event WalletRequested(
+        bytes32 indexed domainHash,
+        address indexed requestedSender,
+        address indexed actualSender
+    );
 
     constructor(address _factory) {
         factory = BusinessWalletFactory(_factory);
@@ -58,45 +63,51 @@ contract BusinessWalletResolver is ReentrancyGuard {
     }
 
     // Modified wallet generation with additional privacy
-    function getWallet(
-        bytes32 domainHash,
-        address sender
-    ) external returns (address) {
-        Business storage business = businesses[domainHash];
-        if (business.domainHash == bytes32(0)) {
-            revert("Business not found");
+    function getWallet(bytes32 domainHash, address sender) public view returns (address) {
+        WalletInfo memory info = senderWallets[domainHash][sender];
+        return info.isActive ? info.walletAddress : address(0);
+    }
+
+    function getOrCreateWallet(bytes32 domainHash, address sender) public returns (address) {
+        address wallet = getWallet(domainHash, sender);
+        if (wallet == address(0)) {
+            wallet = createWallet(domainHash, sender);
         }
+        return wallet;
+    }
 
-        // Check existing wallet with private mapping
-        WalletInfo storage walletInfo = senderWallets[domainHash][sender];
-        if (walletInfo.walletAddress != address(0) && walletInfo.isActive) {
-            return walletInfo.walletAddress;
-        }
+    function createWallet(bytes32 domainHash, address sender) public returns (address) {
+        // Check if business exists
+        require(businesses[domainHash].domainHash == domainHash, "Business not registered");
+        
+        // Check if wallet already exists
+        WalletInfo memory info = senderWallets[domainHash][sender];
+        require(!info.isActive, "Wallet already exists");
 
-        // Generate more private salt
-        bytes32 salt = keccak256(
-            abi.encodePacked(
-                domainHash,
-                sender,
-                business.nonce++,
-                DOMAIN_SALT  // Add contract-specific salt
-            )
-        );
-
-        // Create wallet with obfuscated parameters
+        // Create deterministic salt for the wallet
+        bytes32 salt = keccak256(abi.encodePacked(domainHash, sender));
+        
+        // Deploy new wallet using factory
         address walletAddress = factory.createWallet(salt);
         
-        // Private storage
+        // Store wallet info
         senderWallets[domainHash][sender] = WalletInfo({
             walletAddress: walletAddress,
             isActive: true,
             createdAt: block.timestamp
         });
+
+        // Update wallet to domain mapping
         walletToDomain[walletAddress] = domainHash;
 
-        // Emit minimal information
         emit WalletAssigned(domainHash);
+        
         return walletAddress;
+    }
+
+    // Add a separate non-view function for logging if needed
+    function logWalletRequest(bytes32 domainHash, address sender) public {
+        emit WalletRequested(domainHash, sender, msg.sender);
     }
 
     // Withdraw funds - only business owner can call

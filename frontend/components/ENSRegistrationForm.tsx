@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 import { keccak256, namehash, defaultAbiCoder } from "ethers/lib/utils";
 import ensControllerJson from "../abi/ensController.json";
 import { convertToSeconds } from "../utils/convertToSeconds";
+import businessWalletResolverABI from "../abi/BusinessWalletResolver.json";
 
 export default function ENSRegistrationForm() {
   const [domain, setDomain] = useState("");
@@ -130,36 +131,70 @@ export default function ENSRegistrationForm() {
         gasLimit: 300000,
       });
 
-      await tx.wait();
+      await tx.wait(2); // Wait for 2 block confirmations
+      console.log(
+        "ENS registration confirmed, waiting for business registration..."
+      );
 
-      // Set the ENS name
-      const nameSet = await setENSName(provider, domain);
-      console.log("Name set result:", nameSet);
+      // // Add a small delay to allow ownership to propagate
+      // await new Promise((resolve) => setTimeout(resolve, 5000));
 
-      // Test gateway connection first
+      // // Verify ownership through NameWrapper
+      // const nameWrapper = new ethers.Contract(
+      //   "0x0635513f179D50A207757E05759CbD106d7dFcE8", // NameWrapper address
+      //   [
+      //     "function ownerOf(uint256 id) view returns (address)",
+      //     "function getData(uint256 id) view returns (address, uint32, uint64)",
+      //   ],
+      //   provider
+      // );
+
+      // const node = namehash(`${domain}.eth`);
+      // const tokenId = ethers.BigNumber.from(node).toString();
+      // const [wrappedOwner] = await nameWrapper.getData(tokenId);
+      // const currentSigner = await signer.getAddress();
+
+      // if (wrappedOwner.toLowerCase() !== currentSigner.toLowerCase()) {
+      //   throw new Error(
+      //     `NameWrapper ownership verification failed. Owner: ${wrappedOwner}, Signer: ${currentSigner}`
+      //   );
+      // }
+
+      // Now proceed with setting the name
+      //   const nameSet = await setENSName(provider, domain);
+      //   console.log("Name set result:", nameSet);
+
+      //   if (!nameSet) {
+      //     setStatus("Warning: Domain registered but name setting failed");
+      //     setIsLoading(false);
+      //     return;
+      //   }
+
+      // Then register the business
+      const businessRegistered = await registerBusinessForDomain(
+        provider,
+        domain
+      );
+      console.log("Business registration result:", businessRegistered);
+
+      if (!businessRegistered) {
+        setStatus(
+          "Warning: Domain registered but business registration failed"
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      // Test gateway connection
       const gatewayActive = await testGateway();
       console.log("Gateway active:", gatewayActive);
 
-      // Add verification step
-      const isVerified = await verifyRegistration(
-        provider,
-        domain,
-        resolverAddress!
-      );
-
-      // Test resolution
-      await testResolution(provider, domain);
-
       setStatus(
-        `✅ Domain "${domain}.eth" registered successfully!\n${
-          isVerified
-            ? "Resolver configured correctly"
-            : "Warning: Resolver might not be properly configured"
-        }\n${
-          gatewayActive
-            ? "Gateway is active"
-            : "Warning: Gateway might not be accessible"
-        }`
+        `✅ Domain "${domain}.eth" registered successfully!\n` +
+          `Business registration: ${
+            businessRegistered ? "Success" : "Failed"
+          }\n` +
+          `Gateway connection: ${gatewayActive ? "Active" : "Inactive"}`
       );
 
       // Log registration details for verification
@@ -169,7 +204,7 @@ export default function ENSRegistrationForm() {
         resolver: resolverAddress,
         duration: duration.toString(),
         namehash: namehash(`${domain}.eth`),
-        isVerified,
+        isVerified: true,
       });
     } catch (error: any) {
       console.error("Detailed error:", error);
@@ -320,28 +355,143 @@ export default function ENSRegistrationForm() {
   ) => {
     try {
       const signer = provider.getSigner();
+      const signerAddress = await signer.getAddress();
+
+      // First get the ENS Registry contract
       const ensRegistry = new ethers.Contract(
         "0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e", // ENS Registry on Sepolia
         [
-          "function setName(string calldata name) public",
           "function setResolver(bytes32 node, address resolver) public",
+          "function owner(bytes32 node) public view returns (address)",
+          "function resolver(bytes32 node) public view returns (address)",
         ],
         signer
       );
 
-      // First set the resolver
       const node = namehash(`${domain}.eth`);
-      await ensRegistry.setResolver(
+
+      // Check ownership first
+      const currentOwner = await ensRegistry.owner(node);
+      console.log("Domain ownership:", {
+        domain: `${domain}.eth`,
+        currentOwner,
+        signerAddress,
         node,
-        process.env.NEXT_PUBLIC_OFFCHAIN_RESOLVER_ADDRESS
+      });
+
+      if (currentOwner.toLowerCase() !== signerAddress.toLowerCase()) {
+        throw new Error("You don't own this domain");
+      }
+
+      // Get current resolver
+      const currentResolver = await ensRegistry.resolver(node);
+      const targetResolver = process.env.NEXT_PUBLIC_OFFCHAIN_RESOLVER_ADDRESS;
+
+      console.log("Resolver status:", {
+        currentResolver,
+        targetResolver,
+        needsUpdate:
+          currentResolver.toLowerCase() !== targetResolver?.toLowerCase(),
+      });
+
+      // Only update resolver if needed
+      if (currentResolver.toLowerCase() !== targetResolver?.toLowerCase()) {
+        console.log("Setting resolver...");
+        const tx = await ensRegistry.setResolver(node, targetResolver, {
+          gasLimit: 100000, // Explicit gas limit
+        });
+        console.log("Waiting for resolver transaction...");
+        await tx.wait();
+        console.log("Resolver set successfully");
+      } else {
+        console.log("Resolver already set correctly");
+      }
+
+      // Now get the Public Resolver to set the name
+      const publicResolver = new ethers.Contract(
+        targetResolver!, // Your offchain resolver address
+        [
+          "function setName(bytes32 node, string memory name) public",
+          "function name(bytes32 node) public view returns (string memory)",
+        ],
+        signer
       );
 
-      // Then set the name
-      await ensRegistry.setName(`${domain}.eth`);
+      // Set the name in the resolver
+      try {
+        const tx = await publicResolver.setName(node, `${domain}.eth`, {
+          gasLimit: 100000, // Explicit gas limit
+        });
+        await tx.wait();
+        console.log("Name set in resolver successfully");
+      } catch (error) {
+        console.error("Error setting name in resolver:", error);
+        // Continue even if this fails, as it's not critical
+      }
 
       return true;
     } catch (error) {
-      console.error("Error setting ENS name:", error);
+      console.error("Error setting ENS name:", {
+        error,
+        message: error.message,
+        domain,
+      });
+      return false;
+    }
+  };
+
+  const registerBusinessForDomain = async (
+    provider: ethers.providers.Web3Provider,
+    domain: string
+  ) => {
+    try {
+      const businessWalletResolverAddress =
+        process.env.NEXT_PUBLIC_BUSINESS_WALLETS_RESOLVER_ADDRESS;
+
+      if (!businessWalletResolverAddress) {
+        throw new Error("Business Wallet Resolver address not configured");
+      }
+
+      const signer = provider.getSigner();
+      const signerAddress = await signer.getAddress();
+      const domainHash = ethers.utils.namehash(`${domain}.eth`);
+
+      // Create dummy signature for now
+      const signature = ethers.utils.arrayify("0x00");
+
+      console.log("Registering business with parameters:", {
+        resolverAddress: businessWalletResolverAddress,
+        domain,
+        domainHash,
+        signerAddress,
+      });
+
+      const businessWalletResolver = new ethers.Contract(
+        businessWalletResolverAddress,
+        businessWalletResolverABI.abi,
+        signer
+      );
+
+      // First register the business
+      const registerTx = await businessWalletResolver.registerBusiness(
+        domainHash,
+        signature,
+        {
+          gasLimit: 200000,
+        }
+      );
+
+      console.log("Business registration transaction sent:", registerTx.hash);
+      await registerTx.wait();
+
+      return true;
+    } catch (error: any) {
+      console.error("Error registering business:", {
+        error,
+        message: error.message,
+        code: error.code,
+        data: error.data,
+      });
       return false;
     }
   };

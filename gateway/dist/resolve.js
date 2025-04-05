@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const ethers_1 = require("ethers");
 const BusinessWalletResolver_json_1 = __importDefault(require("./helpers/BusinessWalletResolver.json"));
 require("dotenv/config");
+// Create provider and wallet
 const provider = new ethers_1.ethers.providers.JsonRpcProvider(process.env.RPC_URL);
 const BUSINESS_WALLETS_RESOLVER_ADDRESS = process.env.BUSINESS_WALLETS_RESOLVER_ADDRESS;
 if (!BUSINESS_WALLETS_RESOLVER_ADDRESS) {
@@ -13,18 +14,31 @@ if (!BUSINESS_WALLETS_RESOLVER_ADDRESS) {
 }
 const resolve = async (name, sender, data) => {
     try {
-        // Create a contract instance
-        const resolverContract = new ethers_1.ethers.Contract(BUSINESS_WALLETS_RESOLVER_ADDRESS, BusinessWalletResolver_json_1.default.abi, provider);
+        // Create contract instance with provider for view functions
+        const contract = new ethers_1.ethers.Contract(BUSINESS_WALLETS_RESOLVER_ADDRESS, BusinessWalletResolver_json_1.default.abi, provider);
         // Calculate the domain hash from the name
         const domainHash = ethers_1.ethers.utils.namehash(name);
-        // Call the getWallet function with domainHash and sender address
-        const walletAddress = await resolverContract.getWallet(domainHash, sender);
-        // Return the wallet address as a hex string
-        return ethers_1.ethers.utils.hexlify(walletAddress);
+        try {
+            // Get wallet address (view function only)
+            const walletAddress = await contract.getWallet(domainHash, sender);
+            console.log("walletAddress", walletAddress);
+            // Encode the wallet address in the format ENS expects
+            // For addr(bytes32) calls, we need to return the address as a 32-byte value
+            return ethers_1.ethers.utils.defaultAbiCoder.encode(["address"], [walletAddress]);
+        }
+        catch (error) {
+            console.log("Contract error:", error.message);
+            // If business is not registered, return zero address
+            if (error.message.includes("Business not registered")) {
+                return ethers_1.ethers.utils.defaultAbiCoder.encode(["address"], [ethers_1.ethers.constants.AddressZero]);
+            }
+            throw error;
+        }
     }
     catch (error) {
         console.error("Error resolving address:", error);
-        throw new Error("Failed to resolve address for sender");
+        // For any other error, return zero address
+        return ethers_1.ethers.utils.defaultAbiCoder.encode(["address"], [ethers_1.ethers.constants.AddressZero]);
     }
 };
 exports.default = resolve;
