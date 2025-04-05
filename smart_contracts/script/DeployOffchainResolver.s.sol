@@ -14,9 +14,9 @@ contract DeployOffchainResolver is Script {
         address[] memory signers = new address[](1);
         signers[0] = vm.addr(deployerPrivateKey);
 
-        // Deploy with localhost gateway URL and deployer as signer
+        // Deploy with gateway URL and deployer as signer
         OffchainResolver resolver = new OffchainResolver(
-            "http://localhost:8080/gateway",
+            "http://localhost:8080/gateway",  // Your gateway URL
             signers
         );
 
