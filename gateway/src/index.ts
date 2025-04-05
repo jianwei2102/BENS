@@ -1,6 +1,5 @@
-import { Server } from "@chainlink/ccip-read-server";
 import { ethers } from "ethers";
-import { makeServer } from "./server";
+import { makeApp } from "./server";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -11,8 +10,7 @@ if (!PRIVATE_KEY) {
 }
 
 const signer = new ethers.utils.SigningKey(PRIVATE_KEY);
-const server = makeServer(signer);
-const app = server.makeApp("/gateway");
+const app = makeApp(signer, "/gateway");
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {

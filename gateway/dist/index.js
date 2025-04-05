@@ -12,8 +12,7 @@ if (!PRIVATE_KEY) {
     throw new Error("PRIVATE_KEY environment variable is required");
 }
 const signer = new ethers_1.ethers.utils.SigningKey(PRIVATE_KEY);
-const server = (0, server_1.makeServer)(signer);
-const app = server.makeApp("/gateway");
+const app = (0, server_1.makeApp)(signer, "/gateway");
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
     console.log(`Gateway server running on port ${PORT}`);

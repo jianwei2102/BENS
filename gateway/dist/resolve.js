@@ -1,20 +1,32 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const ethers_1 = require("ethers");
-// import businessWalletsResolver from "./helpers/BusinessWalletsResolver.json";
+const BusinessWalletResolver_json_1 = __importDefault(require("./helpers/BusinessWalletResolver.json"));
 require("dotenv/config");
 const provider = new ethers_1.ethers.providers.JsonRpcProvider(process.env.RPC_URL);
-// This is the address of my deployed BusinessWalletsResolver contract
 const BUSINESS_WALLETS_RESOLVER_ADDRESS = process.env.BUSINESS_WALLETS_RESOLVER_ADDRESS;
 if (!BUSINESS_WALLETS_RESOLVER_ADDRESS) {
     throw new Error("BUSINESS_WALLETS_RESOLVER_ADDRESS is not defined");
 }
-async function resolve(name, sender, data) {
-    console.log("Resolving:", { name, sender, data });
-    // For testing, return a hardcoded address
-    // TODO: Implement actual resolution logic
-    return ethers_1.ethers.utils.defaultAbiCoder.encode(["address"], ["0x1234567890123456789012345678901234567890"]);
-}
+const resolve = async (name, sender, data) => {
+    try {
+        // Create a contract instance
+        const resolverContract = new ethers_1.ethers.Contract(BUSINESS_WALLETS_RESOLVER_ADDRESS, BusinessWalletResolver_json_1.default.abi, provider);
+        // Calculate the domain hash from the name
+        const domainHash = ethers_1.ethers.utils.namehash(name);
+        // Call the getWallet function with domainHash and sender address
+        const walletAddress = await resolverContract.getWallet(domainHash, sender);
+        // Return the wallet address as a hex string
+        return ethers_1.ethers.utils.hexlify(walletAddress);
+    }
+    catch (error) {
+        console.error("Error resolving address:", error);
+        throw new Error("Failed to resolve address for sender");
+    }
+};
 exports.default = resolve;
 // Notes on security
 // 1. CCIP server is the msg.sender to contract, not the orginalSender. Hence we still sender in the getWallet params.
