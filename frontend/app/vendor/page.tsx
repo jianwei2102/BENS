@@ -71,7 +71,7 @@ export default function VendorPortal() {
       id: 1,
       domain: "business.eth",
       amount: "0.5 ETH",
-      date: "2024-04-01",
+      date: "2025-04-01",
       status: "completed",
       txHash: "0x72e8f44df45ee1ba2682faafa475b0e6c1f8e306e0cdd8671507397eebe98ebc",
     },
@@ -79,7 +79,7 @@ export default function VendorPortal() {
       id: 2,
       domain: "business.eth",
       amount: "1.2 ETH",
-      date: "2024-03-28",
+      date: "2025-03-28",
       status: "completed",
       txHash: "0x545877aff86fd9219824b4c46ef91d8867f8cd16e0d8ea17cface30cb4c1d891",
     },
@@ -87,7 +87,7 @@ export default function VendorPortal() {
       id: 3,
       domain: "company.eth",
       amount: "0.3 ETH",
-      date: "2024-03-15",
+      date: "2025-03-15",
       status: "pending",
       txHash: "0x942a952442d754327f71794481576340f2a6ee5832f066a2f5ca7ee80cbbd8e2",
     },
@@ -630,7 +630,7 @@ export default function VendorPortal() {
               <Wallet className="relative h-5 w-5 text-white" />
             </div>
             <p className="text-center text-sm leading-loose text-muted-foreground">
-              © 2024 BENS. All rights reserved.
+              © 2025 BENS. All rights reserved.
             </p>
           </div>
           <div className="flex items-center space-x-4">

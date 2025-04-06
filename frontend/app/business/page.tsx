@@ -130,7 +130,7 @@ export default function BusinessPortal() {
 
   const handleRegisterENS = async () => {
     if (!ensDomain) return;
-    // handleVerify();
+    handleVerify();
 
 
     setIsRegistering(true);
@@ -721,7 +721,7 @@ const handleVerify = async () => {
               <Wallet className="relative h-5 w-5 text-white" />
             </div>
             <p className="text-center text-sm leading-loose text-muted-foreground">
-              © 2024 BENS. All rights reserved.
+              © 2025 BENS. All rights reserved.
             </p>
           </div>
           <div className="flex items-center space-x-4">
