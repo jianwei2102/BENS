@@ -130,7 +130,7 @@ export default function BusinessPortal() {
 
   const handleRegisterENS = async () => {
     if (!ensDomain) return;
-    handleVerify();
+    // handleVerify();
 
 
     setIsRegistering(true);
