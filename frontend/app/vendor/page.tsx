@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
+import { usePrivy } from "@privy-io/react-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,25 +18,11 @@ import {
   Send,
   History,
 } from "lucide-react";
-
-// Mock wallet connection hooks
-function useWalletConnection() {
-  const [isConnected, setIsConnected] = useState(false);
-  const [address, setAddress] = useState<string | undefined>(undefined);
-
-  const connect = async () => {
-    // Mock wallet address
-    setAddress("0x71C7656EC7ab88b098defB751B7401B5f6d8976F");
-    setIsConnected(true);
-    return true;
-  };
-
-  return {
-    isConnected,
-    address,
-    connect,
-  };
-}
+import { Web3Button } from "@/components/ui/web3-button";
+import { Web3Header } from "@/components/web3-header";
+import { Web3Card } from "@/components/ui/web3-card";
+import { ethers } from "ethers";
+import BusinessWalletResolverABI from "@/abi/BusinessWalletResolver.json";
 
 // Add this custom style for number input to remove spinner buttons
 const numberInputStyles = `
@@ -49,11 +36,36 @@ const numberInputStyles = `
   }
 `;
 
+// Add this interface after the imports
+interface Transaction {
+  id: number;
+  domain: string;
+  amount: string;
+  date: string;
+  status: string;
+  txHash: string;
+}
+
+// Helper functions
+const truncateHash = (hash: string) => {
+  if (!hash) return "";
+  return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
+};
+
+const getEtherscanUrl = (txHash: string) => {
+  return `https://sepolia.etherscan.io/tx/${txHash}`;
+};
+
 export default function VendorPortal() {
   const [ensDomain, setEnsDomain] = useState("");
   const [amount, setAmount] = useState("");
   const [activeTab, setActiveTab] = useState("send");
   const [isLoading, setIsLoading] = useState(false);
+  const { login, ready, authenticated, user, logout } = usePrivy();
+  const [resolvedWallet, setResolvedWallet] = useState<string | null>(null);
+  const [isResolving, setIsResolving] = useState(false);
+  const [resolutionError, setResolutionError] = useState<string | null>(null);
+
   const [transactions, setTransactions] = useState([
     {
       id: 1,
@@ -61,7 +73,7 @@ export default function VendorPortal() {
       amount: "0.5 ETH",
       date: "2024-04-01",
       status: "completed",
-      txHash: "0x1234...5678",
+      txHash: "0x72e8f44df45ee1ba2682faafa475b0e6c1f8e306e0cdd8671507397eebe98ebc",
     },
     {
       id: 2,
@@ -69,7 +81,7 @@ export default function VendorPortal() {
       amount: "1.2 ETH",
       date: "2024-03-28",
       status: "completed",
-      txHash: "0x8765...4321",
+      txHash: "0x545877aff86fd9219824b4c46ef91d8867f8cd16e0d8ea17cface30cb4c1d891",
     },
     {
       id: 3,
@@ -77,26 +89,100 @@ export default function VendorPortal() {
       amount: "0.3 ETH",
       date: "2024-03-15",
       status: "pending",
-      txHash: "0xabcd...efgh",
+      txHash: "0x942a952442d754327f71794481576340f2a6ee5832f066a2f5ca7ee80cbbd8e2",
     },
   ]);
 
-  const { isConnected, address, connect } = useWalletConnection();
-
   const handleConnect = async () => {
     try {
-      await connect();
+      await login();
     } catch (error) {
       console.error("Failed to connect:", error);
     }
   };
 
-  const handleSendTransaction = () => {
-    // In a real implementation, this would interact with your smart contract
+  const handleResolveDomain = useCallback(async () => {
+    if (!ensDomain) return;
+
+    setIsResolving(true);
+    setResolutionError(null);
+
+    try {
+      if (!window.ethereum) {
+        throw new Error("Please install MetaMask to use this feature");
+      }
+
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const signer = provider.getSigner();
+
+      // Get the domain hash
+      const domainHash = ethers.utils.namehash(ensDomain);
+      console.log("Domain hash:", domainHash);
+
+      // Create contract instance
+      const resolverContract = new ethers.Contract(
+        process.env.NEXT_PUBLIC_BUSINESS_WALLET_RESOLVER_ADDRESS!,
+        BusinessWalletResolverABI.abi,
+        signer
+      );
+
+      // First try to get existing wallet
+      const existingWallet = await resolverContract.getWallet(
+        domainHash,
+        await signer.getAddress()
+      );
+      console.log("Existing wallet:", existingWallet);
+
+      if (existingWallet === ethers.constants.AddressZero) {
+        // No existing wallet, create new one
+        console.log("No existing wallet, creating new one...");
+        const tx = await resolverContract.getOrCreateWallet(
+          domainHash,
+          await signer.getAddress()
+        );
+        const receipt = await tx.wait();
+
+        // Get the wallet address from events or make another call to getWallet
+        const newWallet = await resolverContract.getWallet(
+          domainHash,
+          await signer.getAddress()
+        );
+        setResolvedWallet(newWallet);
+      } else {
+        // Existing wallet found
+        setResolvedWallet(existingWallet);
+      }
+    } catch (error: any) {
+      console.error("Resolution error:", error);
+      setResolutionError(error.message || "Failed to resolve domain");
+    } finally {
+      setIsResolving(false);
+    }
+  }, [ensDomain]);
+
+  const handleSendTransaction = async () => {
+    if (!resolvedWallet || !amount) return;
+
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      // Add new transaction to history
+    try {
+      if (!window.ethereum) {
+        throw new Error("Please install MetaMask to use this feature");
+      }
+
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
+      const signer = provider.getSigner();
+
+      // Create transaction object
+      const tx = {
+        to: resolvedWallet,
+        value: ethers.utils.parseEther(amount),
+      };
+
+      // Send transaction
+      const transaction = await signer.sendTransaction(tx);
+      console.log("Transaction sent:", transaction.hash);
+
+      // Add to transactions list
       setTransactions([
         {
           id: transactions.length + 1,
@@ -104,88 +190,108 @@ export default function VendorPortal() {
           amount: `${amount} ETH`,
           date: new Date().toISOString().split("T")[0],
           status: "pending",
-          txHash: `0x${Math.random()
-            .toString(16)
-            .substring(2, 10)}...${Math.random()
-            .toString(16)
-            .substring(2, 10)}`,
+          txHash: transaction.hash,
         },
         ...transactions,
       ]);
+
+      // Wait for transaction to be mined
+      const receipt = await transaction.wait();
+      console.log("Transaction confirmed:", receipt);
+
+      // Update the transaction status to completed
+      setTransactions((prevTx) =>
+        prevTx.map((tx) =>
+          tx.txHash === transaction.hash ? { ...tx, status: "completed" } : tx
+        )
+      );
+
       // Reset form
       setEnsDomain("");
       setAmount("");
-    }, 2000);
+    } catch (error: any) {
+      console.error("Transaction error:", error);
+      alert(error.message || "Failed to send transaction");
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  const exportTransactions = () => {
+    const csvContent = [
+      // CSV Headers
+      ["ENS Domain", "Amount", "Date", "Status", "Transaction Hash"].join(","),
+      // CSV Data
+      ...transactions.map((tx: Transaction) =>
+        [tx.domain, tx.amount, tx.date, tx.status, tx.txHash].join(",")
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `transactions_${new Date().toISOString().split("T")[0]}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Get the first wallet address from the user's linked wallets
+  const walletAddress =
+    user?.wallet?.address || user?.linkedAccounts?.[0]?.address;
 
   return (
     <div className="flex min-h-screen flex-col">
       {/* Add the style tag for number input */}
       <style>{numberInputStyles}</style>
 
-      {/* Updated Header to match consistent styling */}
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container flex h-16 items-center px-4 sm:px-6 lg:px-8 mx-auto max-w-6xl">
-          <div className="mr-4 flex">
-            <Link href="/" className="flex items-center space-x-2">
-              <div className="relative">
-                <div className="absolute -inset-0.5 rounded-full bg-gradient-to-r from-primary to-secondary opacity-75 blur"></div>
-                <Wallet className="relative h-6 w-6 text-white" />
-              </div>
-              <span className="font-bold text-xl gradient-text">BENS</span>
-            </Link>
-          </div>
-          <div className="ml-auto flex items-center space-x-4">
-            {!isConnected ? (
-              <Button
-                onClick={handleConnect}
-                variant="outline"
-                className="bg-gradient-dark hover:opacity-90"
-              >
-                Connect Wallet
-              </Button>
-            ) : (
-              <div className="flex items-center space-x-2">
-                <div className="flex items-center px-3 py-1.5 rounded-full bg-white/10 border border-white/20">
-                  <Wallet className="h-4 w-4 mr-2" />
-                  <span className="font-mono text-sm">
-                    {address?.slice(0, 6)}...{address?.slice(-4)}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
+      <Web3Header
+        isConnected={authenticated}
+        address={walletAddress}
+        onConnect={handleConnect}
+        onDisconnect={logout}
+        showSettings={true}
+      />
 
       <main className="flex-1">
-        {!isConnected ? (
+        {!ready ? (
           <div className="container mx-auto px-4 md:px-6 max-w-3xl py-12">
-            <div className="text-center space-y-4">
-              <h1 className="text-2xl font-bold">Connect Your Wallet</h1>
-              <p className="text-gray-600">
-                Please connect your wallet to access the vendor portal
-              </p>
-              <div className="rounded-lg bg-gray-100 p-4 mx-auto max-w-md">
-                <div className="flex items-center space-x-2 mb-2">
-                  <AlertCircle className="h-5 w-5 text-amber-500" />
-                  <h3 className="font-medium">Why connect your wallet?</h3>
-                </div>
-                <p className="text-sm text-gray-600 text-left">
-                  Connecting your wallet allows you to send transactions to
-                  businesses using their ENS domains. Our system will
-                  automatically resolve to your dedicated wallet address for
-                  each business relationship.
-                </p>
+            <Web3Card className="max-w-2xl mx-auto">
+              <div className="flex items-center justify-center py-8">
+                <Clock className="h-6 w-6 animate-spin text-primary" />
               </div>
-              <Button
-                onClick={handleConnect}
-                className="mt-4 bg-gradient-to-r from-primary to-secondary text-white"
-              >
-                <Wallet className="mr-2 h-4 w-4" />
-                Connect Wallet
-              </Button>
-            </div>
+            </Web3Card>
+          </div>
+        ) : !authenticated ? (
+          <div className="container mx-auto px-4 md:px-6 max-w-3xl py-12">
+            <Web3Card className="max-w-2xl mx-auto">
+              <div className="p-6">
+                <h1 className="text-2xl font-bold mb-4">Connect Your Wallet</h1>
+                <p className="text-muted-foreground mb-6">
+                  Please connect your wallet to access the vendor portal
+                </p>
+                <div className="rounded-lg bg-muted/50 p-4 mb-6">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <AlertCircle className="h-5 w-5 text-amber-500" />
+                    <h3 className="font-medium">Why connect your wallet?</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Connecting your wallet allows you to send transactions to
+                    businesses using their ENS domains. Our system will
+                    automatically resolve to your dedicated wallet address for
+                    each business relationship.
+                  </p>
+                </div>
+                <Web3Button onClick={handleConnect} className="w-full" glowing>
+                  <Wallet className="mr-2 h-4 w-4" />
+                  Connect Wallet
+                </Web3Button>
+              </div>
+            </Web3Card>
           </div>
         ) : (
           <div className="container mx-auto px-4 md:px-6 max-w-3xl py-8">
@@ -245,13 +351,34 @@ export default function VendorPortal() {
                           id="ens"
                           placeholder="business.eth"
                           value={ensDomain}
-                          onChange={(e) => setEnsDomain(e.target.value)}
+                          onChange={(e) => {
+                            setEnsDomain(e.target.value);
+                            setResolvedWallet(null);
+                            setResolutionError(null);
+                          }}
                           className="px-4 py-2 rounded-lg bg-gray-100/10 border-gray-700 focus:border-primary focus:ring-primary"
                         />
-                        <Button className="rounded-lg bg-primary hover:bg-primary/90 text-white px-6">
-                          Resolve
-                        </Button>
+                        <Web3Button
+                          onClick={handleResolveDomain}
+                          disabled={!ensDomain || isResolving}
+                          className="px-6"
+                        >
+                          {isResolving ? (
+                            <>
+                              <Clock className="mr-2 h-4 w-4 animate-spin" />
+                              Resolving...
+                            </>
+                          ) : (
+                            "Resolve"
+                          )}
+                        </Web3Button>
                       </div>
+                      {resolutionError && (
+                        <p className="text-sm text-red-500 mt-1">
+                          <AlertCircle className="inline-block h-4 w-4 mr-1" />
+                          {resolutionError}
+                        </p>
+                      )}
                     </div>
 
                     <div className="space-y-2">
@@ -277,14 +404,21 @@ export default function VendorPortal() {
                       <div className="flex items-center space-x-2 text-sm">
                         <CheckCircle2 className="h-4 w-4 text-green-500" />
                         <span className="font-medium">
-                          Your resolved wallet: {address?.slice(0, 6)}...
-                          {address?.slice(-4)}
+                          {resolvedWallet ? (
+                            <>
+                              Resolved wallet: {resolvedWallet.slice(0, 6)}...
+                              {resolvedWallet.slice(-4)}
+                            </>
+                          ) : (
+                            "Resolve an ENS domain to see the dedicated wallet address"
+                          )}
                         </span>
                       </div>
                       <div className="pl-6">
                         <p className="text-sm text-gray-600">
-                          This transaction will be automatically associated with
-                          your vendor relationship for future reference.
+                          {resolvedWallet
+                            ? "This is your dedicated wallet address for transactions with this business."
+                            : "Each business relationship gets a unique wallet address for privacy."}
                         </p>
                       </div>
 
@@ -303,7 +437,7 @@ export default function VendorPortal() {
                     <Button
                       onClick={handleSendTransaction}
                       className="w-full bg-gray-600 hover:bg-gray-700 text-white"
-                      disabled={!ensDomain || !amount || isLoading}
+                      disabled={!resolvedWallet || !amount || isLoading}
                     >
                       {isLoading ? (
                         <>
@@ -407,7 +541,11 @@ export default function VendorPortal() {
                       <Filter className="mr-2 h-4 w-4" />
                       Filter
                     </Button>
-                    <Button variant="outline" size="sm">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={exportTransactions}
+                    >
                       <Download className="mr-2 h-4 w-4" />
                       Export
                     </Button>
@@ -461,15 +599,18 @@ export default function VendorPortal() {
                           </span>
                         </div>
                         <div className="flex items-center space-x-2">
-                          <span className="font-mono text-xs">{tx.txHash}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
+                          <span className="font-mono text-xs">
+                            {truncateHash(tx.txHash)}
+                          </span>
+                          <Link
+                            href={getEtherscanUrl(tx.txHash)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:text-primary transition-colors"
                           >
                             <ExternalLink className="h-3 w-3" />
-                            <span className="sr-only">View on explorer</span>
-                          </Button>
+                            <span className="sr-only">View on Etherscan</span>
+                          </Link>
                         </div>
                       </div>
                     ))}
@@ -481,24 +622,27 @@ export default function VendorPortal() {
         )}
       </main>
 
-      <footer className="border-t py-6">
-        <div className="container flex flex-col items-center justify-between gap-4 md:h-16 md:flex-row px-4 sm:px-6 lg:px-8 mx-auto max-w-6xl">
+      <footer className="border-t py-6 md:py-0">
+        <div className="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row px-4 sm:px-6 lg:px-8 mx-auto max-w-6xl">
           <div className="flex items-center space-x-2">
-            <Wallet className="h-5 w-5 text-gray-500" />
-            <p className="text-center text-sm leading-loose text-gray-500">
+            <div className="relative">
+              <div className="absolute -inset-0.5 rounded-full bg-gradient-to-r from-primary to-secondary opacity-50 blur-sm"></div>
+              <Wallet className="relative h-5 w-5 text-white" />
+            </div>
+            <p className="text-center text-sm leading-loose text-muted-foreground">
               © 2024 BENS. All rights reserved.
             </p>
           </div>
           <div className="flex items-center space-x-4">
             <Link
               href="/terms"
-              className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               Terms
             </Link>
             <Link
               href="/privacy"
-              className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
+              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               Privacy
             </Link>

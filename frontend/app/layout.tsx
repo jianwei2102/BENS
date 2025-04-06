@@ -1,10 +1,12 @@
 // app/layout.tsx
 import type { Metadata } from "next";
 import "./globals.css";
+import Privy from "@/components/providers/privy";
+import MiniKitProvider from "@/components/providers/miniket";
 
 export const metadata: Metadata = {
-  title: "v0 App",
-  description: "Created with v0",
+  title: "BENS",
+  description: "Business ENS",
   generator: "v0.dev",
 };
 
@@ -16,7 +18,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <div>{children}</div>
+        <MiniKitProvider>
+          <Privy>
+            <div>{children}</div>
+          </Privy>
+        </MiniKitProvider>
       </body>
     </html>
   );
